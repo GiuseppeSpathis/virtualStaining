@@ -3,9 +3,10 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --time=10:00:00          
+#SBATCH --time=10:00:00          # Aumentato il tempo per processare più file .npz
 #SBATCH --output=./outputfid.out
 
+# Carica l'ambiente conda
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate pixcell 
 

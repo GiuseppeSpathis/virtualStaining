@@ -12,7 +12,15 @@ import matplotlib.pyplot as plt
 import cv2
 undersample={
 }
-
+'''
+with open('data_for_undersampling') as f:
+    l = f.readlines()
+    for i in l:
+        j = i.split('=')
+        val = j[1].split(',')
+        # avg annotation/file , allowed samples per annotation , allowed per file
+        undersample[j[0]] = (float(val[0]), float(val[1]), float(val[2]))
+'''
 dictionary={
     "fiber":0.2,
     "normal":0.1,
@@ -195,7 +203,11 @@ def extract_patches_chromo_ocno(path, size=256, level=0):
     patches = []
     for i in range(x):
         for j in range(y):
-            im = tiles.get_tile(level_inverse, (i, j))
+            try:
+                im = tiles.get_tile(level_inverse, (i, j))
+            except Exception as e:
+                print(f'[warn] skip tile ({i},{j}): {e}')
+                continue
 
             std = np.array(im)[:, :, 0].std(), np.array(im)[:, :, 1].std(), np.array(im)[:, :, 2].std()
             m = max(abs(std[0] - std[1]), abs(std[2] - std[1]), abs(std[0] - std[2]))
@@ -220,17 +232,20 @@ def extract_patches_chromo_ocno(path, size=256, level=0):
 
 def onco_chromo(input):
     file = input[0]
-    label=input[1]
+    label = input[1]
     if (os.path.isdir(file)):
-        return  'done '+file
+        return 'done ' + file
     if (os.path.splitext(file)[-1] not in ['.svs', '.tif', '.scn']):
-        return  'done '+file
+        return 'done ' + file
+    try:
+        k = extract_patches_chromo_ocno(file, input[2], input[3])
+        print('saving ' + file)
+        np.savez_compressed(input[4], np.array([(np.array(i), dictionary[label]) for i in k], dtype=object))
+        print('saved ' + file)
+    except Exception as e:
+        print(f'[ERROR] skipping {file}: {e}')
+    return 'done ' + file
 
-    k=extract_patches_chromo_ocno(file, input[2], input[3])
-    print('saving '+file)
-    np.savez_compressed(input[4],np.array([(np.array(i),dictionary[label]) for i in k],dtype=object))
-    print('saved ' + file)
-    return  'done ' +file
 
 def loop_ocno_chromo(path,out,size,level,cores):
     label=os.path.basename(path)

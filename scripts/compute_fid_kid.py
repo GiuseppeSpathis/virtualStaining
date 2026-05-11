@@ -18,6 +18,9 @@ except ImportError:
 NPZ_EXTS = {".npz"}
 
 
+# -----------------------------
+# Utilities: tiles -> uint8 HWC RGB
+# -----------------------------
 def _tile_to_uint8_numpy(tile) -> np.ndarray:
     if not isinstance(tile, np.ndarray):
         tile = np.array(tile)
@@ -32,6 +35,7 @@ def _ensure_hwc_rgb_uint8(x: np.ndarray) -> np.ndarray:
     if x.ndim == 2:
         x = np.stack([x, x, x], axis=-1)
     elif x.ndim == 3:
+        # CHW -> HWC if looks like 3xHxW
         if x.shape[0] in (1, 3) and x.shape[-1] not in (1, 3):
             x = np.transpose(x, (1, 2, 0))
         if x.shape[-1] == 1:
@@ -51,7 +55,9 @@ def _ensure_hwc_rgb_uint8(x: np.ndarray) -> np.ndarray:
     return x
 
 
-
+# -----------------------------
+# NPZ list + deterministic selection
+# -----------------------------
 def list_npz_files(folder: str) -> List[str]:
     p = Path(os.path.expanduser(folder))
     if not p.exists():
@@ -76,12 +82,19 @@ def resolve_files_by_basenames(folder: str, basenames: List[str]) -> List[str]:
             out.append(str(fp))
         else:
             missing.append(bn)
-    
+    if missing:
+        raise RuntimeError(
+            f"In folder {p} mancano {len(missing)}/{len(basenames)} file richiesti. "
+            f"Esempi missing: {missing[:5]}"
+        )
     return out
 
 
 def choose_common_fake_basenames(fake_folders_abs: List[str], n_files: int) -> List[str]:
-  
+    """
+    Intersezione dei basenames NPZ tra tutte le cartelle fake.
+    Selezione deterministica: primi n_files in ordine alfabetico.
+    """
     sets = []
     for f in fake_folders_abs:
         bns = set(list_npz_basenames(f))
@@ -90,7 +103,11 @@ def choose_common_fake_basenames(fake_folders_abs: List[str], n_files: int) -> L
     common = set.intersection(*sets) if sets else set()
     common_sorted = sorted(list(common))
 
-    
+    if len(common_sorted) < n_files:
+        raise RuntimeError(
+            f"Intersezione fake troppo piccola: comuni={len(common_sorted)} < n_files={n_files}. "
+            f"Devi ridurre n_files o rigenerare i fake con gli stessi input."
+        )
     return common_sorted[:n_files]
 
 
@@ -128,7 +145,12 @@ def gather_npz_from_file_list(
     mmap: bool = True,
     verbose: bool = True,
 ) -> List[np.ndarray]:
-    
+    """
+    Deterministico, NO random.
+    - usa esattamente i file in file_list (ordine già deterministico)
+    - prende tile sequenziali 0.. per raggiungere target_total
+    - se qualche file ha meno tile, fa top-up prendendo extra dagli altri file (sempre dentro file_list), in ordine.
+    """
     n_files = len(file_list)
     counts = per_file_counts(int(target_total), n_files)
     if verbose:
@@ -147,6 +169,7 @@ def gather_npz_from_file_list(
     if deficit > 0 and verbose:
         print(f"[INFO] Short by {deficit} images (some npz smaller). Filling within the same selected files...")
 
+    # PASS 2: top-up dagli stessi file (oltre quanto già preso)
     if deficit > 0:
         for idx, f in enumerate(file_list):
             if deficit <= 0:
@@ -158,7 +181,11 @@ def gather_npz_from_file_list(
     if verbose:
         print(f"[INFO] After fill: {len(out)} images")
 
-    
+    if len(out) < target_total:
+        raise RuntimeError(
+            f"Impossibile raggiungere target_total={target_total} con i file selezionati: "
+            f"raccolte {len(out)} immagini."
+        )
 
     if len(out) > target_total:
         out = out[:target_total]
@@ -222,6 +249,7 @@ def compute_full_fid(
 # Crop FID + KID (Inception-based, seeded)
 # -----------------------------
 def make_kid_metric(device: str, subset_size: int, subsets: int, normalize: bool = True):
+    # compatibilità tra versioni torchmetrics
     try:
         return KernelInceptionDistance(subset_size=subset_size, subsets=subsets, normalize=normalize).to(device)
     except Exception:
@@ -294,7 +322,8 @@ def main():
     ap.add_argument("--npz_key", type=str, default="arr_0")
 
     ap.add_argument("--target_total", type=int, default=3000)
-    ap.add_argument("--fake_n_files", type=int, default=7)
+    ap.add_argument("--fake_n_files", type=int, default=7,
+                    help="Numero di file NPZ da usare, uguali tra i fake (intersezione basenames).")
 
     ap.add_argument("--no_mmap", action="store_true")
     ap.add_argument("--device", type=str, default="cuda")
@@ -311,19 +340,29 @@ def main():
 
     device = args.device
     if device == "cuda" and not torch.cuda.is_available():
+        print("[WARN] CUDA non disponibile, uso cpu")
         device = "cpu"
 
     mmap = not args.no_mmap
     seeds = [int(s.strip()) for s in args.seeds.split(",") if s.strip()]
-    
+    if not seeds:
+        raise ValueError("Lista seeds vuota")
+
     folders = [x.strip() for x in args.folders.split(",") if x.strip()]
-    
+    if not folders:
+        raise ValueError("folders vuoto")
+
+    # cartelle fake assolute
     fake_folders_abs = [str(Path(os.path.expanduser(args.gen_root)) / f) for f in folders]
 
+    # 1) scegli i basenames comuni SOLO tra i fake
     common_basenames = choose_common_fake_basenames(fake_folders_abs, args.fake_n_files)
     print(f"[INFO] FAKE common basenames ({len(common_basenames)}): {common_basenames}")
 
+    # 2) REAL: carica deterministico da tutti i file disponibili
     real_files_all = list_npz_files(args.real_root)
+    print(f"[INFO] REAL npz files: {len(real_files_all)} (uso tutti, deterministico)")
+    print(f"[INFO] Carico REAL da: {args.real_root}")
     real_imgs = gather_npz_from_file_list(
         real_files_all,
         npz_key=args.npz_key,
@@ -331,14 +370,16 @@ def main():
         mmap=mmap,
         verbose=True,
     )
-    print(f"[INFO] REAL: {len(real_imgs)}")
+    print(f"[INFO] REAL: {len(real_imgs)} immagini")
 
+    # 3) FAKE: carica per ciascun metodo esattamente quei file comuni
     fake_cache: Dict[str, List[np.ndarray]] = {}
 
     for name in folders:
         fake_path = str(Path(os.path.expanduser(args.gen_root)) / name)
         file_list = resolve_files_by_basenames(fake_path, common_basenames)
 
+        print(f"\n[INFO] Carico FAKE({name}) da: {fake_path}")
         fake_imgs = gather_npz_from_file_list(
             file_list,
             npz_key=args.npz_key,
@@ -346,14 +387,16 @@ def main():
             mmap=mmap,
             verbose=True,
         )
+        print(f"[INFO] FAKE({name}): {len(fake_imgs)} immagini")
         fake_cache[name] = fake_imgs
 
+    # 4) per-seed metrics + summary nello stesso foglio
     rows: List[Dict[str, Any]] = []
 
     for name in folders:
         fake_path = str(Path(os.path.expanduser(args.gen_root)) / name)
 
-        # Vanilla FID on full tiles 
+        # Vanilla FID on full tiles (deterministico per il set)
         fid_full = compute_full_fid(
             real_imgs=real_imgs,
             fake_imgs=fake_cache[name],
@@ -397,7 +440,9 @@ def main():
                 "row_type": "seed",
             })
 
-    
+    if pd is None:
+        raise ImportError("pandas non installato: pip install pandas openpyxl")
+
     df = pd.DataFrame(rows)
 
     # Summary per model: mean/std across seeds
@@ -456,6 +501,7 @@ def main():
     df_out = df_out.sort_values(["__ord", "model_folder", "__seednum"]).drop(columns=["__ord", "__seednum"])
 
     df_out.to_excel(args.out_xlsx, index=False)
+    print(f"\n[INFO] Salvato Excel (single sheet): {args.out_xlsx}")
 
 
 if __name__ == "__main__":
