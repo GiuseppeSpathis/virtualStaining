@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH --job-name=pixcell_pr
-#SBATCH --cpus-per-task=10
+#SBATCH --job-name=svs2npz
+#SBATCH --cpus-per-task=8
 #SBATCH --nodes=1
 #SBATCH --mem=64G
 #SBATCH --time=6:00:00
-#SBATCH --output=./output.out
+#SBATCH --output=./svs2npz.out
 
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate pixcell
 
 
-python svs_to_npz.py \
-  --path ~/giuSpathis/dataset/CK7_Lyon \
+python -u /home/sg510849/giuSpathis/scriptsPixcell/svs_to_npz.py \
+  --path /home/sg510849/giuSpathis/data/tmp/sheyenneDataset \
   --mode testing \
   --size 1024
