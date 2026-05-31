@@ -86,8 +86,7 @@ if [ "$RUN_FULL_DATASET" = true ]; then
             python -u "$EXTRACT_SCRIPT" \
               --npz "$NPZ_FILE" \
               --out_dir "$IMG_OUT_DIR" \
-              --n 999999 \
-              --bgr
+              --n 999999 
         done
     done
 
@@ -142,8 +141,7 @@ if [ "$RUN_FULL_DATASET" = true ]; then
             python -u "$EXTRACT_SCRIPT" \
               --npz "$NPZ_FILE" \
               --out_dir "$IMG_OUT_DIR" \
-              --n 999999 \
-              --bgr
+              --n 999999 
         done
     done
     
@@ -206,8 +204,7 @@ else
         python -u "$EXTRACT_SCRIPT" \
             --npz "$LATEST_NPZ" \
             --out_dir "$IMG_OUT_DIR" \
-            --n 999999 \
-            --bgr
+            --n 999999 
     fi
 
     echo "=== DEBUG COMPLETATO ==="
