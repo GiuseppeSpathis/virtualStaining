@@ -11,7 +11,6 @@ conda activate pixcell
 
 cd ../PixCell
 
-# Path ai tuoi file custom
 MY_LORA="/home/sg510849/giuSpathis/PixCell/checkpoints_lora_normalized/CUSTOM_NPZ_CK7_lora_9.pth"
 #MY_LORA="mist_her2"
 #MY_LORA="/home/sg510849/giuSpathis/PixCell/checkpoints_lora_morph_latent/lora_morph_latent_epoch_3.pth"
@@ -23,7 +22,6 @@ DEBUG_FILE="HP24009757-0-0-HE_62441.npz"
 #MY_FLOW="/home/sg510849/giuSpathis/PixCell/checkpoints_mlp_ck7_scratch/CUSTOM_NPZ_PAIRED_CK7_mlp_final.pth"
 MY_FLOW="mist_her2"
 
-#col mehdiTesting devi mettere bgr True
 python -u run_pixcell_virtual_stain_npz.py \
   --input_dir $INPUT_DIR \
   --output_base_dir $OUTPUT_BASE \

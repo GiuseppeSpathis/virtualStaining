@@ -1,26 +1,4 @@
 #!/usr/bin/env python3
-"""
-train_flow_mlp.py  — versione estesa con CUSTOM_NPZ_PAIRED
-
-Aggiunge:
-  - dataset CUSTOM_NPZ_PAIRED  (he_dir + ihc_paired_dir)
-  - --warmstart_ckpt            (inizializza da checkpoint MLP esistente, es. mist_her2)
-  - --use_bf16 / --use_tf32     (performance)
-  - --num_workers               (configurabile)
-
-Usage (custom paired):
-    python virtual_staining/train_flow_mlp.py \
-        --dataset          CUSTOM_NPZ_PAIRED \
-        --he_dir           ~/giuSpathis/data/training/he \
-        --ihc_paired_dir   ~/giuSpathis/data/training/ihc_paired \
-        --warmstart_ckpt   downloads/mist_her2_mlp.pth \
-        --stain            CK7 \
-        --device           cuda \
-        --train_batch_size 4 \
-        --num_epochs       100 \
-        --save_every       25 \
-        --save_dir         ./checkpoints_mlp
-"""
 
 import os
 import numpy as np
@@ -125,7 +103,6 @@ def main():
     # ------------------------------------------------------------------ #
     # 1.  UNI
     # ------------------------------------------------------------------ #
-    print("[INFO] Caricamento UNI2-h …")
     timm_kwargs = {
         "img_size": 224, "patch_size": 14, "depth": 24, "num_heads": 24,
         "init_values": 1e-5, "embed_dim": 1536, "mlp_ratio": 2.66667 * 2,
@@ -174,8 +151,6 @@ def main():
         persistent_workers = False,
         prefetch_factor    = 2 if args.num_workers > 0 else None,
     )
-    print(f"[INFO] Tile totali: {len(dataset)}  |  "
-          f"Steps/epoch: {len(train_dataloader)}")
 
     # ------------------------------------------------------------------ #
     # 3.  MLP
@@ -204,7 +179,7 @@ def main():
                 "mist_ki67":  "ckpts/mlp/mist_ki67_mlp.pth",
                 "her2match":  "ckpts/mlp/her2match_mlp.pth",
             }
-            print(f"[INFO] Scarico warm-start checkpoint: {args.warmstart_target} …")
+            print(f"[INFO] warm-start checkpoint: {args.warmstart_target} …")
             ckpt_path = hf_hub_download(
                 repo_id    = "StonyBrook-CVLab/pixcell-virtual-staining",
                 filename   = mlp_map[args.warmstart_target],
@@ -219,7 +194,7 @@ def main():
         if unexpected:
             print(f"  [WARN] Chiavi inattese  : {unexpected}")
     else:
-        print("[INFO] Training da zero (no warm-start).")
+        print("[INFO] Training from scratch (no warm-start).")
 
     # ------------------------------------------------------------------ #
     # 4.  Optimizer
@@ -241,7 +216,7 @@ def main():
             bs = he.shape[0]
 
             # ---- UNI embeddings ----
-            # 1024x1024 -> 16 patch 256x256 ciascuna
+            # 1024x1024 -> 16 patch 256x256 
             uni_patches_he = einops.rearrange(
                 he, "b c (d1 h) (d2 w) -> (b d1 d2) c h w", d1=4, d2=4
             )
@@ -289,14 +264,12 @@ def main():
                 losses = losses[-100:]
             bar.set_postfix({"loss": f"{np.mean(losses):.5f}"})
 
-        # ---- Salvataggio periodico ----
         if (epoch + 1) % args.save_every == 0:
             name = f"CUSTOM_NPZ_PAIRED_{args.stain}_mlp_{epoch+1}.pth"
             path = os.path.join(args.save_dir, name)
             torch.save(uni_mlp.state_dict(), path)
             print(f"  [SAVE] {path}")
 
-    # ---- Salvataggio finale ----
     final_name = f"CUSTOM_NPZ_PAIRED_{args.stain}_mlp_final.pth"
     final_path = os.path.join(args.save_dir, final_name)
     torch.save(uni_mlp.state_dict(), final_path)

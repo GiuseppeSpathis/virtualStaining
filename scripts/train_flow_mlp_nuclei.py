@@ -28,13 +28,11 @@ def parse_args():
     p.add_argument("--use_bf16", action="store_true")
     p.add_argument("--use_tf32", action="store_true")
     
-    # Parametri Nuclei
     p.add_argument("--nuclei_weight", type=float, default=0.25)
     p.add_argument("--nuclei_start_epoch", type=int, default=150)
     p.add_argument("--nuclei_graph_weight", type=float, default=1.0)
     p.add_argument("--nuclei_density_gamma", type=float, default=2.0)
     
-    # Aggiunto il parametro per il Warmstart
     p.add_argument("--warmstart_ckpt", type=str, default=None, help="Percorso del checkpoint .pth da cui ripartire")
     return p.parse_args()
 
@@ -42,7 +40,6 @@ class PrecomputedMLPDataset(Dataset):
     def __init__(self, emb_dir, den_dir, he_dir, ihc_dir, max_per_file=300):
         self.emb_dir = emb_dir
         
-        print("[INFO] Rigenerazione mappa indici tramite NPZFolderDataset...")
         self.index_mapper = NPZFolderDataset(
             folder_path=he_dir, mask_folder_path=ihc_dir,
             max_per_file=max_per_file, verbose=False
@@ -50,7 +47,6 @@ class PrecomputedMLPDataset(Dataset):
         
         self.num_samples = len(self.index_mapper.samples)
         
-        print(f"[INFO] Allineamento e resize a 4x4 di {self.num_samples} densità in corso...")
         self.densities_ram = []
         
         for i in range(self.num_samples):
@@ -63,7 +59,6 @@ class PrecomputedMLPDataset(Dataset):
             den_arr = np.load(density_full_path, mmap_mode="r")
             den_patch = torch.from_numpy(np.array(den_arr[internal_idx])).float() # (8, 8)
             
-            # TRUCCO PER I 16 TOKEN: Resize da 8x8 a 4x4
             den_patch = den_patch.unsqueeze(0).unsqueeze(0) # (1, 1, 8, 8)
             den_patch_4x4 = F.max_pool2d(den_patch, kernel_size=2).squeeze() # (4, 4)
             
@@ -80,7 +75,6 @@ class PrecomputedMLPDataset(Dataset):
         
         return he_emb, ihc_emb, den_patch
 
-# --- Funzioni Ausiliarie Loss ---
 def densities_to_patch_weights(densities_4x4, device, threshold=0.15):
     d = densities_4x4.to(device=device, dtype=torch.float32)
     mask = (d > threshold).float()
@@ -115,10 +109,6 @@ def main():
         he_dir=args.he_dir, ihc_dir=args.ihc_dir
     )
 
-    print("\n" + "="*50)
-    print("CHECK COMPLETATO CON SUCCESSO (16 TOKENS)")
-    print(f"Dataset allineato! Embeddings: {len(dataset)} | Densità 4x4: {len(dataset.densities_ram)}")
-    print("="*50 + "\n")
 
     dataloader = DataLoader(dataset, batch_size=args.train_batch_size, shuffle=True, 
                             num_workers=args.num_workers, pin_memory=True, persistent_workers=True)
@@ -126,9 +116,6 @@ def main():
     uni_mlp = SimpleMLP(in_channels=1536, time_embed_dim=1024, model_channels=1024, 
                         bottleneck_channels=1024, out_channels=1536, num_res_blocks=6).to(device)
     
-    # =========================================================
-    # GESTIONE WARMSTART ED ESTRAZIONE EPOCA
-    # =========================================================
     start_epoch = 0
     if args.warmstart_ckpt is not None:
         if os.path.exists(args.warmstart_ckpt):
@@ -136,26 +123,19 @@ def main():
             state = torch.load(args.warmstart_ckpt, map_location="cpu")
             uni_mlp.load_state_dict(state, strict=False)
             
-            # Estrazione intelligente dell'epoca dal nome file (es. "mlp_nuclei_ep100.pth")
             try:
                 base_name = os.path.basename(args.warmstart_ckpt)
                 if "_ep" in base_name:
-                    # Prende tutto ciò che c'è dopo "_ep" e rimuove ".pth"
                     epoch_str = base_name.split("_ep")[-1].split(".")[0]
                     if epoch_str.isdigit():
                         start_epoch = int(epoch_str)
-                        print(f"[INFO] Resume automatico. Il training ripartirà dall'epoca {start_epoch}")
                 else:
-                    print(f"[WARN] Nessun '_epX' trovato nel nome file. Ripartirò dall'epoca 0 pur mantenendo i pesi.")
             except Exception as e:
-                print(f"[WARN] Impossibile dedurre l'epoca dal nome file ({e}). Partirò da 0.")
         else:
-            print(f"[ERROR] Il file {args.warmstart_ckpt} non esiste! Il training partirà da zero.")
     
     opt = torch.optim.AdamW(uni_mlp.parameters(), lr=args.learning_rate)
     autocast_dtype = torch.bfloat16 if args.use_bf16 else torch.float16
     
-    # Loop che parte da start_epoch
     for epoch in range(start_epoch, args.num_epochs):
         print(f"Epoch [{epoch+1}/{args.num_epochs}]")
         bar = tqdm(dataloader)
@@ -196,16 +176,12 @@ def main():
 
             bar.set_postfix({"loss": f"{total_loss.item():.4f}", "flow": f"{flow_loss.item():.4f}", "nuc": f"{nuc_loss_val:.4f}"})
 
-        # --- SALVATAGGIO INTERMEDIO ---
         if (epoch + 1) % args.save_every == 0:
             save_path = os.path.join(args.save_dir, f"mlp_nuclei_ep{epoch+1}.pth")
             torch.save(uni_mlp.state_dict(), save_path)
-            print(f"[SAVE] Checkpoint {epoch+1} salvato in: {save_path}", flush=True)
 
-    # --- SALVATAGGIO FINALE A FINE CICLO ---
     final_path = os.path.join(args.save_dir, f"PRECOMPUTED_CK7_mlp_final.pth")
     torch.save(uni_mlp.state_dict(), final_path)
-    print(f"\n[DONE] Addestramento terminato! Checkpoint finale salvato in: {final_path}", flush=True)
 
 if __name__ == "__main__":
     main()

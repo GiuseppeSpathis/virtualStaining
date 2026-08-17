@@ -22,13 +22,11 @@ from stardist.models import StarDist2D
 from csbdeep.utils import normalize
 import tensorflow as tf
 
-# Forza TensorFlow a usare solo la VRAM strettamente necessaria (Memory Growth)
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        print("TensorFlow memory growth abilitato con successo.")
     except RuntimeError as e:
         print(e)
 
@@ -54,7 +52,6 @@ def parse_args():
     p.add_argument("--flow_steps", type=int, default=100)
     p.add_argument("--seed", type=int, default=2024)
     
-    # --- SCOUT PASS PARAMETERS (Strength & Progress) ---
     p.add_argument("--dab_positive_strength", type=float, default=0.80, help="Strength for complex DAB patterns (e.g., Chromo/pRCC)")
     p.add_argument("--dab_negative_strength", type=float, default=0.55, help="Strength for structural tumors (e.g., Onco/Clear Cell)")
     p.add_argument("--dab_positive_progress", type=float, default=0.60, help="Progress threshold for complex DAB patterns")
@@ -87,12 +84,10 @@ def parse_args():
     p.add_argument("--reinhard_color_blur", type=int, default=5, help="Blur strength for Reinhard color.")
     p.add_argument("--show_debug_output", action="store_true", help="Enable saving intermediate debug images to the debug_outputs folder.")
     
-    # --- NOVELTIES FLAG ---
     p.add_argument("--no_novelties", action="store_true", help="Disable SDEdit, consensus, harmonization, and morphological masks for a vanilla baseline.")
     
     args = p.parse_args()
 
-    # Override dei parametri se si richiede una generazione vanilla
     if args.no_novelties:
         args.dab_positive_strength = 1.0
         args.dab_negative_strength = 1.0
@@ -172,13 +167,12 @@ def set_perf_flags(args):
             pass
     torch.backends.cudnn.benchmark = True
     
-    # --- STEP 2: Attivazione esplicita SDPA (FlashAttention / Memory Efficient) ---
     try:
         torch.backends.cuda.enable_flash_sdp(True)
         torch.backends.cuda.enable_math_sdp(True)
         torch.backends.cuda.enable_mem_efficient_sdp(True)
     except AttributeError:
-        pass # Ignora se la versione di torch è precedente all'implementazione SDPA
+        pass 
 
 
 def load_uni(device):
@@ -417,11 +411,8 @@ def hed_dab_channel(rgb_uint8):
     Converts the RGB matrix to HED color space and isolates the DAB optical density channel.
     """
     rgb01 = rgb_uint8.astype(np.float32) / 255.0
-    # Protezione contro log(0)
     rgb01 = np.maximum(rgb01, 1e-6)
     hed = rgb2hed(rgb01)
-    # skimage rgb2hed restituisce valori OD. Il DAB è nel canale 2.
-    # Clip a 0.0 perché OD negativo non ha senso biologico.
     d = np.clip(hed[:, :, 2].astype(np.float32), 0.0, None)
     return hed, d
 
@@ -509,15 +500,9 @@ def consensus_stain_aware(images, he_rgb, nuclei_mask, args):
 def inpaint_and_harmonize_one(gen_img, batch_label, mask_clean, stardist_model, prob_thresh,
                               transformer, vae, scheduler, uni_cond_one, latent_mask_one,
                               seed, args, autocast_dtype, device):
-    """
-    Rileva falsi nuclei, li sostituisce con texture sintetica preservando il DAB,
-    armonizza la toppa tramite SDEdit e fonde il risultato nello spazio dei pixel 
-    per evitare artefatti di decodifica VAE.
-    """
     if getattr(args, "disable_false_nuclei_inpaint", False):
         return gen_img
 
-    # 1. Rilevamento dei falsi nuclei
     img_norm_gen = normalize(gen_img, 1, 99.8, axis=(0, 1, 2))
     labels_gen, _ = stardist_model.predict_instances(img_norm_gen, prob_thresh=prob_thresh)
     mask_gen = (labels_gen > 0).astype(np.uint8)
@@ -531,25 +516,19 @@ def inpaint_and_harmonize_one(gen_img, batch_label, mask_clean, stardist_model, 
     if cv2.countNonZero(false_nuclei) == 0:
         return gen_img
 
-    # 2. Creazione dell'area da sostituire
     kernel = np.ones((5, 5), np.uint8)
     false_nuclei_dilated = cv2.dilate(false_nuclei, kernel, iterations=1)
     false_nuclei_bool = false_nuclei_dilated > 0
 
-    # 3. Rilevamento DAB nell'area da patchare (per preservarlo)
     _, dab_od = hed_dab_channel(gen_img)
     
-    # Maschera binaria grezza basata sulla soglia OD
     dab_mask_raw = (dab_od > args.dab_abs_threshold).astype(np.uint8)
     
-    # --- PULIZIA MORFOLOGICA DEL RUMORE ---
     kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     dab_mask_clean = cv2.morphologyEx(dab_mask_raw, cv2.MORPH_OPEN, kernel_clean)
     
-    # Ora intersechiamo la maschera PULITA con l'area dei nuclei allucinati
     dab_to_preserve_mask = (dab_mask_clean & false_nuclei_bool.astype(np.uint8))
 
-    # 4. Creazione della Texture Sintetica Adattiva per Background
     background_pixels = gen_img[mask_clean_uint8 == 0]
     if len(background_pixels) > 100:
         local_bg_mean = np.mean(background_pixels, axis=0)
@@ -564,7 +543,6 @@ def inpaint_and_harmonize_one(gen_img, batch_label, mask_clean, stardist_model, 
     
     synthetic_texture = cv2.GaussianBlur(synthetic_texture, (3, 3), 0)
     
-    # 5. Patching Adattivo
     patched_img = gen_img.copy()
     mask_3d_false = np.expand_dims(false_nuclei_bool, axis=-1)
     patched_img = np.where(mask_3d_false > 0, synthetic_texture, patched_img)
@@ -576,33 +554,27 @@ def inpaint_and_harmonize_one(gen_img, batch_label, mask_clean, stardist_model, 
     if args.harmonization_strength <= 0:
         return patched_img
 
-    # 6. Armonizzazione Fluida (No maschere latenti customizzate)
     patched_tensor = (torch.from_numpy(patched_img).float().to(device) / 127.5) - 1.0
     patched_tensor = patched_tensor.permute(2, 0, 1).unsqueeze(0).contiguous()
 
     with torch.no_grad(), torch.autocast("cuda", dtype=autocast_dtype):
-        # Usiamo il sample per dare al modello flessibilità nell'armonizzare la toppa
         latent_patched = vae.encode(patched_tensor).latent_dist.sample() * vae.config.scaling_factor
 
-    # Chiamiamo SDEdit ripristinando latent_mask_one (la morfologia originale dell'H&E)
     harmonized = run_hybrid_sdedit_batch(
         transformer, vae, scheduler, uni_cond_one, latent_patched, latent_mask_one,
         [seed], args.num_inference_steps, args.harmonization_strength, args.guidance_scale,
-        autocast_dtype, device, 1.0 # Passiamo 1.0 o un progress neutrale qui per l'armonizzazione locale, se desiderato
+        autocast_dtype, device, 1.0 
     )
     
     harmonized_img = (harmonized.permute(0, 2, 3, 1).float().cpu().numpy()[0] * 255.0).clip(0, 255).astype(np.uint8)
 
-    # 7. PIXEL-SPACE BLENDING (La magia finale)
     localized_inpaint_mask_uint8 = cv2.subtract(
         (false_nuclei_bool).astype(np.uint8), (dab_to_preserve_mask > 0).astype(np.uint8)
     )
     
-    # Creiamo una transizione morbida (alpha matte) molto pulita con OpenCV
     blend_mask = cv2.GaussianBlur(localized_inpaint_mask_uint8.astype(np.float32), (15, 15), 0)
     blend_mask_3d = np.expand_dims(blend_mask, axis=-1)
     
-    # Incolliamo in modo invisibile la toppa armonizzata sopra l'immagine originale perfetta
     final_blended_img = (blend_mask_3d * harmonized_img.astype(np.float32)) + ((1.0 - blend_mask_3d) * gen_img.astype(np.float32))
 
     return np.clip(final_blended_img, 0, 255).astype(np.uint8)
@@ -635,37 +607,21 @@ def make_seed_list(args):
     return [int(s) for s in seeds]
 
 def strip_eosin(rgb_uint8):
-    """
-    Scompone l'immagine H&E nello spazio HED, azzera l'Eosina e la riporta in RGB.
-    Crea un finto background IHC pulito mantenendo i nuclei.
-    """
-    # Convertiamo in float [0, 1] e proteggiamo dai log(0)
     rgb01 = np.maximum(rgb_uint8.astype(np.float32) / 255.0, 1e-6)
     
-    # Trasformiamo in HED
     hed = rgb2hed(rgb01)
     
-    # Il canale 1 è l'Eosina (il canale 0 è l'Ematossilina, il 2 è il DAB)
-    # Azzeriamo completamente il rosa/viola dello stroma
     hed[:, :, 1] = 0.0 
     
-    # Torniamo in RGB
     clean_rgb = hed2rgb(hed)
     
     return np.clip(clean_rgb * 255.0, 0, 255).astype(np.uint8)
 
 def estimate_dynamic_params(he_rgb, uni_cond_one, latent_he, transformer, vae, scheduler, device, autocast_dtype, args):
-    """
-    Esegue una generazione 'Scout' ultra-rapida senza vincoli per far decidere 
-    al modello stesso quanta forza bruta (strength e progress) servirà per il DAB.
-    """
-    # Usiamo pochissimi step e strength 1.0 per la massima velocità ed espressione libera
     scout_steps = 20
     
-    # Creiamo una maschera dummy (tutto zero) perché in questo scout pass vogliamo la generazione libera (Vanilla)
     dummy_mask = torch.zeros_like(latent_he)
     
-    # Generiamo 1 solo seed rapido
     scout_latent = run_hybrid_sdedit_batch(
         transformer, vae, scheduler, uni_cond_one, latent_he, dummy_mask,
         [42], scout_steps, 1.0, args.guidance_scale, autocast_dtype, device, 0.0
@@ -673,23 +629,18 @@ def estimate_dynamic_params(he_rgb, uni_cond_one, latent_he, transformer, vae, s
     
     scout_img = (scout_latent.permute(0, 2, 3, 1).float().cpu().numpy()[0] * 255.0).clip(0, 255).astype(np.uint8)
     
-    # --- Analisi del DAB ---
     _, dab_od = hed_dab_channel(scout_img)
     
-    # Puliamo il rumore con l'operatore morfologico (come abbiamo fatto prima)
     dab_mask_raw = (dab_od > args.dab_abs_threshold).astype(np.uint8)
     kernel_clean = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     dab_mask_clean = cv2.morphologyEx(dab_mask_raw, cv2.MORPH_OPEN, kernel_clean)
     
-    # Calcoliamo la percentuale di DAB sull'area di tessuto valida
     tissue_mask = tissue_mask_rgb(he_rgb)
     tissue_area = max(1, int(tissue_mask.sum()))
     dab_area = cv2.countNonZero(dab_mask_clean)
     
     dab_ratio = dab_area / tissue_area
     
-    # --- DECISIONE ---
-    # Se il DAB copre più della percentuale target del tessuto, assegnamo strength e progress alti
     if dab_ratio > args.scout_dab_threshold: 
         return args.dab_positive_strength, args.dab_positive_progress
     else: 
@@ -733,7 +684,6 @@ def main():
     transformer = build_transformer_with_lora(device, args.target, args.num_tokens)
     uni_mlp = build_flow_mlp(device, args.flow_target)
     
-    # Se il flag no_novelties è attivo, risparmiamo VRAM non caricando StarDist
     stardist_model = None if args.no_novelties else StarDist2D.from_pretrained("2D_versatile_he")
 
     target_means, target_stds = np.array([135.0, 128.0, 110.0]), np.array([15.0, 5.0, 8.0]) 
@@ -778,7 +728,6 @@ def main():
         out_path = os.path.join(out_dir, output_filename)
         
         if os.path.exists(out_path):
-            print(f"  [SKIP] Il file {out_path} esiste già. Passo al prossimo!")
             continue
 
         mmap_mode = "r" if args.mmap_npz else None
@@ -837,7 +786,6 @@ def main():
                 batch_labels.append(lab)
                 batch_original_indices.append(i)
 
-                # --- BYPASS PREPROCESSING SE NOVELTIES DISABILITATO ---
                 if args.no_novelties:
                     prec_img = tile
                     mask_clean = np.zeros(tile.shape[:2], dtype=np.float32)
@@ -903,7 +851,6 @@ def main():
             raw_tensor = (torch.from_numpy(batch_for_vae).float().to(device) / 127.5) - 1.0
             raw_tensor = raw_tensor.permute(0, 3, 1, 2).contiguous()
 
-            # Usiamo .mode() per Image-to-Image globale standard
             latent_he_batch = encode_latent_mode(
                 sd3_vae,
                 raw_tensor,
@@ -914,7 +861,6 @@ def main():
             mask_latent_batch = torch.cat(batch_mask_tensors, dim=0)
 
             for bi in range(len(batch_tile_indices)):
-                # Isola i dati specifici del tile corrente all'interno del batch
                 single_uni_cond = uni_cond[bi:bi+1]
                 single_latent_he = latent_he_batch[bi:bi+1]
                 single_mask_latent = mask_latent_batch[bi:bi+1]
@@ -928,13 +874,12 @@ def main():
                 
                 raw_imgs_for_this_tile = []
                 
-                # --- CHIAMATA ALL'ORACOLO ---
                 dynamic_strength, dynamic_progress = estimate_dynamic_params(
                     single_tile_orig, single_uni_cond, single_latent_he, 
                     transformer, sd3_vae, scheduler, device, autocast_dtype, args
                 )
                 
-                print(f"Tile {single_orig_idx} - DAB stimato, applico strength: {dynamic_strength} | progress: {dynamic_progress}")
+                print(f"Tile {single_orig_idx} - DAB, strength: {dynamic_strength} | progress: {dynamic_progress}")
 
                 for seed_chunk in seed_chunks:
                     K = len(seed_chunk)
@@ -956,7 +901,6 @@ def main():
                         seed_img = decoded_np[idx]
                         raw_imgs_for_this_tile.append(seed_img)
 
-                        # Salvataggio seed
                         if args.save_seed_outputs:
                             seed_out_dir = os.path.join(out_dir, f"seed_{s}")
                             os.makedirs(seed_out_dir, exist_ok=True)
@@ -967,7 +911,6 @@ def main():
                     if args.empty_cuda_cache and device.type == "cuda":
                         torch.cuda.empty_cache()
 
-                # Consensus per il tile corrente
                 if args.skip_consensus:
                     best_raw_img = raw_imgs_for_this_tile[0]
                 else:
@@ -978,7 +921,6 @@ def main():
                         args
                     )
 
-                # Localized Harmonize con preservazione DAB nucleare
                 final_img = inpaint_and_harmonize_one(
                     best_raw_img,
                     single_label,
@@ -997,52 +939,37 @@ def main():
                 )
 
              
-                # ---------------------------------------------------------
-                # BLOCCO DEBUG AGGIORNATO: Salvataggio step intermedi + Rumore Latente
-                # ---------------------------------------------------------
                 if args.show_debug_output:
                     debug_dir = os.path.join(out_dir, "debug_outputs", f"tile_{single_orig_idx}")
                     os.makedirs(debug_dir, exist_ok=True)
                     
-                    # 1. H&E Originale in input
                     Image.fromarray(single_tile_orig).save(os.path.join(debug_dir, "01_he_original.png"))
                     
-                    # 2. H&E Pre-processata (Eosin stripped + Reinhard normalization, NO RUMORE)
                     Image.fromarray(batch_for_vae[bi]).save(os.path.join(debug_dir, "02a_he_preprocessed_no_noise.png"))
                     
-                    # --- NUOVO: RICOSTRUZIONE DELL'IMMAGINE RUMOROSA DAL LATENTE ---
-                    # Calcoliamo il timestep esatto di partenza usato da run_hybrid_sdedit_batch
                     steps_to_run = max(1, min(int(args.num_inference_steps * dynamic_strength), args.num_inference_steps))
                     start_idx = args.num_inference_steps - steps_to_run
                     scheduler.set_timesteps(args.num_inference_steps, device=device)
                     t_start = scheduler.timesteps[start_idx]
                     
-                    # Generiamo lo stesso rumore esatto che userà il primo seed
                     g = torch.Generator(device=device).manual_seed(run_seeds[0])
                     noise = torch.randn(single_latent_he.shape, generator=g, device=device, dtype=single_latent_he.dtype)
                     
-                    # Aggiungiamo il rumore al latente
                     noisy_latent = scheduler.add_noise(single_latent_he, noise, torch.tensor([t_start], device=device))
                     
-                    # Decodifichiamo il latente rumoroso in spazio RGB tramite il VAE
                     with torch.no_grad(), torch.autocast("cuda", dtype=autocast_dtype):
                         noisy_dec = sd3_vae.decode(noisy_latent / sd3_vae.config.scaling_factor, return_dict=False)[0]
                         noisy_img = (0.5 * (noisy_dec + 1)).clamp(0, 1).permute(0, 2, 3, 1).float().cpu().numpy()[0]
                         noisy_img_uint8 = (noisy_img * 255.0).astype(np.uint8)
                     
                     Image.fromarray(noisy_img_uint8).save(os.path.join(debug_dir, "02b_he_with_latent_noise.png"))
-                    # ---------------------------------------------------------------
 
-                    # 3. Maschera Nucleare (StarDist)
                     mask_uint8 = (single_prec_img[1] * 255.0).astype(np.uint8)
                     Image.fromarray(mask_uint8).save(os.path.join(debug_dir, "03_nuclear_mask.png"))
                     
-                    # 4. Output post prima passata di inferenza (SDEdit / Consensus)
                     Image.fromarray(best_raw_img).save(os.path.join(debug_dir, "04_pre_harmonization.png"))
                     
-                    # 5. Output Finale Armonizzato
                     Image.fromarray(final_img).save(os.path.join(debug_dir, "05_final_output.png"))
-                # ---------------------------------------------------------
 
                 generated_data.append([
                     final_img,

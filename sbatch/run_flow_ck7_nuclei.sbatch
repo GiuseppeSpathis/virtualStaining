@@ -9,7 +9,6 @@
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate pixcell
 
-# Percorsi aggiornati per 16 tokens
 DATA_DIR="/home/sg510849/giuSpathis/data/trainingMLP/precomputed_paired16"
 DEN_DIR="/home/sg510849/giuSpathis/data/trainingMLP/stardist_densities_8x8"
 HE_DIR="/home/sg510849/giuSpathis/data/trainingMLP/heFiltered_clean"
@@ -21,7 +20,6 @@ mkdir -p ./logs
 
 cd ~/giuSpathis/PixCell/virtual_staining
 
-echo "Avvio addestramento accelerato a 16 TOKEN con maschere nucleari..."
 
 python train_flow_mlp_nuclei.py \
     --data_dir "$DATA_DIR" \
@@ -39,5 +37,3 @@ python train_flow_mlp_nuclei.py \
     --nuclei_start_epoch 100 \
     --use_bf16 \
     --use_tf32
-
-echo "Job completato."

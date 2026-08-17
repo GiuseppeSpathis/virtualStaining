@@ -12,7 +12,6 @@ conda activate pixcell
 cd /home/sg510849/giuSpathis/PixCell
 export HF_TOKEN=""
 
-# --- VARIABILI GLOBALI ---
 MY_LORA="/home/sg510849/giuSpathis/PixCell/checkpoints_lora_normalized/CUSTOM_NPZ_CK7_lora_9.pth"
 MY_FLOW="/home/sg510849/giuSpathis/PixCell/checkpoints_mlp_ck7_nuclei_16tok/mlp_nuclei_ep90.pth"
 BASE_DATA_DIR="/home/sg510849/giuSpathis/data/trainingMLP"
@@ -28,10 +27,7 @@ if [ "$RUN_FULL_DATASET" = true ]; then
     #TUMOR_TYPES=("ccRCC" "chRCC" "onco" "pRCC")
     TUMOR_TYPES=("pRCC")
 
-    # =====================================================
-    # 1. ELABORAZIONE TRAINING (he -> ihc_fake)
-    # =====================================================
-    echo "-> Inizio dataset di Training..."
+    
     for TUMOR in "${TUMOR_TYPES[@]}"; do
         INPUT_DIR="${BASE_DATA_DIR}/heFiltered_clean/${TUMOR}"
         OUTPUT_DIR="${BASE_DATA_DIR}/ihc_fake_afterNormalization/${TUMOR}"
@@ -39,7 +35,6 @@ if [ "$RUN_FULL_DATASET" = true ]; then
         
         echo "Processing: $TUMOR -> $OUTPUT_DIR"
         
-        # --- FASE INFERENZA ---
         for INPUT_NPZ in "$INPUT_DIR"/*.npz; do
             [ -e "$INPUT_NPZ" ] || continue
             
@@ -48,9 +43,7 @@ if [ "$RUN_FULL_DATASET" = true ]; then
             OUT_NPZ="$OUTPUT_DIR/$OUT_BASENAME"
 
             if [ -f "$OUT_NPZ" ]; then
-                echo "  [SKIP] Inferenza saltata: $OUT_NPZ esiste già."
             else
-                echo "  [RUN] Generazione di $OUT_NPZ in corso..."
                 #python -u run_pixcell_preprocess.py \
                 #--input_dir "$INPUT_DIR" \
                 #--output_base_dir "$OUTPUT_DIR" \
@@ -89,8 +82,6 @@ if [ "$RUN_FULL_DATASET" = true ]; then
             fi
         done
 
-        # --- FASE DI ESTRAZIONE IMMAGINI ---
-        echo "-> Estrazione immagini dai file .npz in $OUTPUT_DIR"
         for NPZ_FILE in "$OUTPUT_DIR"/*.npz; do
             [ -e "$NPZ_FILE" ] || continue
             
@@ -98,9 +89,7 @@ if [ "$RUN_FULL_DATASET" = true ]; then
             IMG_OUT_DIR="$OUTPUT_DIR/$BASENAME"
             
             if [ -d "$IMG_OUT_DIR" ]; then
-                echo "  [SKIP] Estrazione saltata: cartella $IMG_OUT_DIR già presente."
             else
-                echo "  [RUN] Estraggo $BASENAME in $IMG_OUT_DIR"
                 python -u "$EXTRACT_SCRIPT" \
                   #--npz "$NPZ_FILE" \
                   #--out_dir "$IMG_OUT_DIR" \
@@ -109,18 +98,12 @@ if [ "$RUN_FULL_DATASET" = true ]; then
         done
     done
 
-    # =====================================================
-    # 2. ELABORAZIONE TEST (test -> testIHC)
-    # =====================================================
-    echo "-> Inizio dataset di Test..."
     for TUMOR in "${TUMOR_TYPES[@]}"; do
         INPUT_DIR="${BASE_DATA_DIR}/test/${TUMOR}"
         OUTPUT_DIR="${BASE_DATA_DIR}/testIHC_afterNormalization/${TUMOR}"
         mkdir -p "$OUTPUT_DIR"
         
-        echo "Processing: $TUMOR -> $OUTPUT_DIR"
         
-        # --- FASE INFERENZA ---
         for INPUT_NPZ in "$INPUT_DIR"/*.npz; do
             [ -e "$INPUT_NPZ" ] || continue
             
@@ -129,9 +112,7 @@ if [ "$RUN_FULL_DATASET" = true ]; then
             OUT_NPZ="$OUTPUT_DIR/$OUT_BASENAME"
 
             if [ -f "$OUT_NPZ" ]; then
-                echo "  [SKIP] Inferenza saltata: $OUT_NPZ esiste già."
             else
-                echo "  [RUN] Generazione di $OUT_NPZ in corso..."
                 python -u run_pixcell_preprocess.py \
                 --input_dir "$INPUT_DIR" \
                 --output_base_dir "$OUTPUT_DIR" \
@@ -170,8 +151,6 @@ if [ "$RUN_FULL_DATASET" = true ]; then
             fi
         done
 
-        # --- FASE DI ESTRAZIONE IMMAGINI ---
-        echo "-> Estrazione immagini dai file .npz in $OUTPUT_DIR"
         for NPZ_FILE in "$OUTPUT_DIR"/*.npz; do
             [ -e "$NPZ_FILE" ] || continue
             
@@ -179,9 +158,7 @@ if [ "$RUN_FULL_DATASET" = true ]; then
             IMG_OUT_DIR="$OUTPUT_DIR/$BASENAME"
             
             if [ -d "$IMG_OUT_DIR" ]; then
-                echo "  [SKIP] Estrazione saltata: cartella $IMG_OUT_DIR già presente."
             else
-                echo "  [RUN] Estraggo $BASENAME in $IMG_OUT_DIR"
                 python -u "$EXTRACT_SCRIPT" \
                   --npz "$NPZ_FILE" \
                   --out_dir "$IMG_OUT_DIR" \
@@ -190,10 +167,8 @@ if [ "$RUN_FULL_DATASET" = true ]; then
         done
     done
     
-    echo "=== ELABORAZIONE MASSIVA COMPLETATA ==="
 
 else
-    echo "=== MODALITA' DEBUG: Elaborazione file singolo ==="
 
     INPUT_DIR="/home/sg510849/giuSpathis/data/trainingMLP/test/ccRCC"
     OUTPUT_BASE="/home/sg510849/giuSpathis/resultsMorph"
@@ -203,7 +178,6 @@ else
     OUT_NPZ="$OUTPUT_BASE/$OUT_BASENAME"
 
     if [ -f "$OUT_NPZ" ]; then
-         echo "  [SKIP] Inferenza saltata: $OUT_NPZ esiste già."
     else
         python -u run_pixcell_preprocess.py \
             --input_dir "$INPUT_DIR" \
@@ -245,7 +219,6 @@ else
             --bgr 
     fi
       
-    # Estrazione per il singolo file in modalità debug
     LATEST_NPZ=$(ls -t "$OUTPUT_BASE"/*.npz 2>/dev/null | head -1)
     
     if [ -n "$LATEST_NPZ" ]; then
@@ -253,9 +226,7 @@ else
         IMG_OUT_DIR="$OUTPUT_BASE/$LATEST_BASENAME"
         
         if [ -d "$IMG_OUT_DIR" ]; then
-            echo "  [SKIP] Estrazione saltata: cartella $IMG_OUT_DIR già presente."
         else
-            echo "Estraggo immagini debug da $LATEST_NPZ in $IMG_OUT_DIR"
             python -u "$EXTRACT_SCRIPT" \
                 --npz "$LATEST_NPZ" \
                 --out_dir "$IMG_OUT_DIR" \
@@ -263,5 +234,4 @@ else
         fi
     fi
 
-    echo "=== DEBUG COMPLETATO ==="
 fi

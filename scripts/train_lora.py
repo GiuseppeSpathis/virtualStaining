@@ -114,7 +114,7 @@ def main():
         "attention_head_dim": 72,
         "attention_type": "default",
         "caption_channels": 1536,
-        "caption_num_tokens": 64, #spazio latente cambiato da 16 a 64
+        "caption_num_tokens": 64, 
         "cross_attention_dim": 1152,
         "dropout": 0.0,
         "in_channels": 16,
@@ -139,21 +139,17 @@ def main():
         filename="transformer/diffusion_pytorch_model.safetensors",
         local_dir="downloads/",
     )
-    #ho cambiato lo spazio latente da 16 a 64, quindi carico i pesi originali e li adatto al nuovo spazio latente
     '''
     lora_transformer.load_state_dict(load_file(ckpt_path), strict=False)
     '''
-    # STA PARTE E' NUOVA PER LO SPAZIO LATENTE 
     state_dict = load_file(ckpt_path)
     
-    # 2. Rimuovi la chiave problematica che ha dimensione [16, 1536]
     key_to_remove = "caption_projection.uncond_embedding"
     if key_to_remove in state_dict:
         print(f"[INFO] Rimuovo '{key_to_remove}' dal checkpoint per mismatch di shape (16 -> 64 token)")
         del state_dict[key_to_remove]
     
     lora_transformer.load_state_dict(state_dict, strict=False)
-    # FINE PARTE NUOVA PER LO SPAZIO LATENTE
     # ---- Add LoRA to cross-attention layers ----
     target_modules = [
         "attn2.add_k_proj",
@@ -175,22 +171,16 @@ def main():
     )
     lora_transformer.add_adapter(transformer_lora_config)
     
-    # ==========================================
-    # PARTE NUOVA: CARICA IL CHECKPOINT E L'EPOCA
-    # ==========================================
     start_epoch = 0
     if args.resume_from_checkpoint and os.path.exists(args.resume_from_checkpoint):
-        print(f"\n[INFO] Riprendo il training dal checkpoint: {args.resume_from_checkpoint}\n")
+        print(f"\n[INFO] checkpoint: {args.resume_from_checkpoint}\n")
         state_dict_to_resume = torch.load(args.resume_from_checkpoint, map_location="cpu")
         lora_transformer.load_state_dict(state_dict_to_resume, strict=False)
         
-        # Estraiamo l'epoca dal nome del file! (Es. "CUSTOM_NPZ_CK7_lora_15.pth" -> 15)
         try:
             nome_file = os.path.basename(args.resume_from_checkpoint)
             start_epoch = int(nome_file.split("_lora_")[-1].split(".")[0])
-            print(f"[INFO] Epoca estratta con successo! I log e i salvataggi ripartiranno dall'epoca {start_epoch}")
         except Exception as e:
-            print(f"[WARN] Non sono riuscito a estrarre l'epoca dal nome. Ripartirò da 0. Errore: {e}")
     # ==========================================
 
     if args.gradient_checkpointing and hasattr(lora_transformer, "enable_gradient_checkpointing"):
@@ -255,12 +245,9 @@ def main():
 
     global_step = start_epoch * len(train_dataloader)
 
-    # "Mandiamo avanti" il Learning Rate Scheduler per fargli superare il warmup
-    # simulando i passi che ha già fatto nelle prime 15 epoche
     for _ in range(global_step):
         lr_scheduler.step()
 
-    # Sostituiamo il range in modo che parta da 'start_epoch' invece che da 0
     for epoch in range(start_epoch, args.num_epochs):
         lora_transformer.train()
         progress_bar = tqdm(total=len(train_dataloader), disable=not accelerator.is_local_main_process)
@@ -279,7 +266,6 @@ def main():
                 with accelerator.autocast():
                     # ---- UNI embeddings ----
                     # 1024x1024 -> 16 patches 256x256
-                    #spazio latente cambiato
                     '''
                     uni_patches = einops.rearrange(
                         ihc, "b c (d1 h) (d2 w) -> (b d1 d2) c h w", d1=4, d2=4
@@ -293,7 +279,6 @@ def main():
 
                     with torch.inference_mode():
                         uni_emb_ihc = uni_model(uni_input)
-                    #spazio latente cambiato uni_emb_ihc = uni_emb_ihc.unsqueeze(0).reshape(bs, 16, -1)
                     uni_emb_ihc = uni_emb_ihc.unsqueeze(0).reshape(bs, 64, -1) 
 
                     # ---- Encode IHC -> latents ----

@@ -274,7 +274,6 @@ def main():
     if args.debug_file is not None:
         dbg = args.debug_file
 
-        # se passi un path completo
         if os.path.isabs(dbg) or os.path.sep in dbg:
             input_path = dbg
             if not os.path.exists(input_path):
@@ -285,7 +284,6 @@ def main():
             args.input_dir = os.path.dirname(input_path)
             files = [os.path.basename(input_path)]
         else:
-            # se passi solo il nome file, es. he_1811474_3.npz
             if dbg not in files:
                 raise FileNotFoundError(f"--debug_file '{dbg}' not found in input_dir={args.input_dir}. "f"Available files: {files[:10]}{'...' if len(files) > 10 else ''}")
             files = [dbg]

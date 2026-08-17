@@ -14,7 +14,6 @@ cd ~/giuSpathis/PixCell/virtual_staining
 
 #mkdir -p /home/sg510849/giuSpathis/PixCell/checkpoints_mlp_ck7_pRCC
 
-# Se UNI2-h viene scaricato da HuggingFace e il server lo richiede:
 
 python train_flow_mlp.py \
     --dataset CUSTOM_NPZ_PAIRED \

@@ -21,8 +21,8 @@ OUTPUT_DIR=/home/sg510849/giuSpathis/data/normalizedIhc_filtered/onco
 STAIN_SAN_DIR=/home/sg510849/giuSpathis/stain-san
 WORK_DIR=/home/sg510849/giuSpathis/data/stain_san_tmp_onco
 
-N_TILES=1000        # tile per NPZ
-N_JOBS=16          # parallelismo CPU (uguale a cpus-per-task)
+N_TILES=1000        
+N_JOBS=16          
 
 # ─── RUN ──────────────────────────────────────────────────────────────────────
 SCRIPT=/home/sg510849/giuSpathis/scriptsPixcell/stain_normalize.py

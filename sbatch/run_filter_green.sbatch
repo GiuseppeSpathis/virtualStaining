@@ -7,21 +7,16 @@
 #SBATCH --mem=32G
 #SBATCH --time=08:00:00
 
-# Carica il modulo conda (adatta se il tuo cluster usa un comando diverso, es. module load miniconda3)
-# module load anaconda3/2023.03
 
-# Attiva il tuo ambiente virtuale
 source ~/.bashrc
 conda activate pixcell
 
-# Entra nella directory dello script
 cd /home/sg510849/giuSpathis/scriptsPixcell
 
-# Esegui lo script (puoi modificare i parametri di argparse qui se vuoi testare soglie diverse)
 python filter_green_npz.py \
     --input_dir /home/sg510849/giuSpathis/data/ihc \
     --output_dir /home/sg510849/giuSpathis/data/ihc_filtered \
     --key arr_0 \
     --green_margin 20 \
     --max_green_ratio 0.02 \
-    --max_tiles_per_file 0  #prende tutti i tiles
+    --max_tiles_per_file 0  

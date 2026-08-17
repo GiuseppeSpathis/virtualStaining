@@ -23,7 +23,6 @@ def parse_args():
     return p.parse_args()
 
 def process_and_filter_npz(filepath, out_filepath, args):
-    # Carica i dati in sola lettura per risparmiare RAM
     data = np.load(filepath, allow_pickle=True, mmap_mode='r')
     
     if args.key not in data:
@@ -42,43 +41,32 @@ def process_and_filter_npz(filepath, out_filepath, args):
         end = min(start + batch_size, n_original)
         batch = tiles[start:end]
         
-        # LA SOLUZIONE ALL'ERRORE: 
-        # Controlliamo se è un array di forma (N, 2) strutturato come [immagine, label]
         if batch.ndim == 2 and batch.shape[1] >= 1:
-            # Estraiamo la colonna 0 (le immagini) e le impiliamo in un vero array 4D: (B, H, W, 3)
             images = np.stack(batch[:, 0])
         else:
-            # Se è già un array standard di immagini
             images = batch
             
-        # Ora possiamo estrarre i canali in sicurezza
         R = images[..., 0].astype(np.int16)
         G = images[..., 1].astype(np.int16)
         B = images[..., 2].astype(np.int16)
         
-        # Maschera pixel verdi
         green_mask = (G > R + args.green_margin) & (G > B + args.green_margin)
         green_pixels_per_tile = np.sum(green_mask, axis=(1, 2))
         
         pixels_total = images.shape[1] * images.shape[2]
         green_ratio_per_tile = green_pixels_per_tile / pixels_total
         
-        # Troviamo gli indici locali validi
         local_valid = np.where(green_ratio_per_tile <= args.max_green_ratio)[0]
         valid_indices.extend(local_valid + start)
 
     n_filtered = len(valid_indices)
     
-    # --- NOVITÀ: BILANCIAMENTO DEL DATASET (TETTO MASSIMO) ---
     if args.max_tiles_per_file > 0 and n_filtered > args.max_tiles_per_file:
-        np.random.seed(args.seed) # Impostiamo il seed per avere sempre le stesse tiles se ri-eseguiamo
-        # Scegliamo casualmente N indici senza rimpiazzo
+        np.random.seed(args.seed) 
         valid_indices = np.random.choice(valid_indices, size=args.max_tiles_per_file, replace=False)
-        # Li ordiniamo per mantenere l'ordine originale del file
         valid_indices = np.sort(valid_indices)
         n_filtered = len(valid_indices)
 
-    # Salviamo solo se ci sono tiles valide
     if n_filtered > 0:
         os.makedirs(os.path.dirname(out_filepath), exist_ok=True)
         filtered_tiles = tiles[valid_indices]
@@ -91,10 +79,6 @@ def process_and_filter_npz(filepath, out_filepath, args):
 def main():
     args = parse_args()
     
-    print("Inizio elaborazione...")
-    print(f"Max Green Ratio: {args.max_green_ratio}")
-    print(f"Max Tiles/File:  {args.max_tiles_per_file if args.max_tiles_per_file > 0 else 'Nessun Limite'}")
-    print("-" * 50)
 
     npz_files = []
     for root, _, files in os.walk(args.input_dir):
@@ -118,10 +102,6 @@ def main():
             dropped_green = (n_orig - n_filt) if n_filt >= args.max_tiles_per_file else (n_orig - n_filt)
             print(f"{rel_path}: Salvate {n_filt}/{n_orig} tiles")
 
-    print("-" * 50)
-    print(f"Elaborazione completata!")
-    print(f"Tiles originali totali: {total_orig}")
-    print(f"Tiles finali (dopo verde e bilanciamento): {total_filt}")
 
 if __name__ == "__main__":
     main()

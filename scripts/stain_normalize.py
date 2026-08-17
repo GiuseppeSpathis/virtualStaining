@@ -57,7 +57,7 @@ def main():
         npz_map[stem] = infos
         print("  " + npz_fn + ": " + str(N) + " tile"); sys.stdout.flush()
 
-    print("\n[Step 2] san_images (normalizzazione)..."); sys.stdout.flush()
+    print("\n[Step 2] san_images (normalization)..."); sys.stdout.flush()
     run([
         "python", os.path.join(args.stain_san_dir, "scripts", "san_images.py"),
         "--train-input-dir",  png_in,

@@ -5,35 +5,13 @@ from torch.utils.data import Dataset
 
 
 class NPZFolderDataset(Dataset):
-    """
-    Dataset paired H&E / IHC da cartelle con sottocartelle per subtype:
-        folder_path/
-            ccRCC/
-            chRCC/
-            onco/
-            pRCC/
-        mask_folder_path/
-            ccRCC/
-            chRCC/
-            onco/
-            pRCC/
-
-    Matching:
-      - per ogni subtype
-      - ordina i file .npz di H&E
-      - ordina i file .npz di IHC
-      - accoppia per posizione: primo con primo, secondo con secondo, ecc.
-
-    Ogni sample restituisce:
-      Se precomputed_path NON è fornito o il file non esiste: (img, mask)
-      Se precomputed_path è fornito e il file esiste: (img, mask, density_map_8x8)
-    """
+   
 
     def __init__(
         self,
         folder_path: str,
         mask_folder_path: str = None,
-        precomputed_path: str = None, # Directory con le densità (es. stardist_densities_8x8)
+        precomputed_path: str = None, 
         key: str = "arr_0",
         max_per_file: int = 300,
         sort_files: bool = True,
@@ -50,16 +28,12 @@ class NPZFolderDataset(Dataset):
 
         if self.verbose:
             mode = "Immagini + Paired-by-order" if self.mask_folder_path else "Immagini"
-            print(f"Indicizzazione {mode} (max {max_per_file} tile per file)...")
 
-        # Sottocartelle subtype presenti in folder_path (può essere HE o IHC a seconda dello script)
-        # Se non ci sono sottocartelle, usiamo la root
         subtypes = [
             d for d in os.listdir(self.folder_path)
             if os.path.isdir(os.path.join(self.folder_path, d))
         ]
         
-        # Gestione fallback se la cartella contiene direttamente i file .npz (senza sottocartelle subtype)
         if not subtypes:
             subtypes = ["."]
 
@@ -72,18 +46,15 @@ class NPZFolderDataset(Dataset):
             src_files = [
                 f for f in os.listdir(src_subdir)
                 if f.endswith(".npz")
-                # Abbiamo rimosso il filtro f.startswith("he_") così funziona anche per "ihc_"
             ]
             if sort_files:
                 src_files.sort()
 
-            # Se c'è una cartella target accoppiata
             if self.mask_folder_path:
                 tgt_subdir = self.mask_folder_path if subtype == "." else os.path.join(self.mask_folder_path, subtype)
 
                 if not os.path.isdir(tgt_subdir):
                     if self.verbose:
-                        print(f"Salto subtype {subtype}: cartella target/IHC non trovata")
                     continue
 
                 tgt_files = [
@@ -131,12 +102,10 @@ class NPZFolderDataset(Dataset):
                     except Exception as e:
                         if self.verbose:
                             print(
-                                f"Errore nell'indicizzazione pair "
                                 f"{os.path.basename(src_fp)} <-> {os.path.basename(tgt_fp)}: {e}"
                             )
 
             else:
-                # Modalità non paired (es. Training LoRA solo su IHC)
                 for f in src_files:
                     src_fp = os.path.join(src_subdir, f)
                     try:
@@ -150,10 +119,9 @@ class NPZFolderDataset(Dataset):
                             self.samples.append((src_fp, None, i))
                     except Exception as e:
                         if self.verbose:
-                            print(f"Errore nell'indicizzazione di {src_fp}: {e}")
 
         if self.verbose:
-            print(f"Dataset pronto: {len(self.samples)} campioni totali.")
+            print(f"Dataset ready: {len(self.samples)} total samples.")
 
     def __len__(self):
         return len(self.samples)
@@ -173,16 +141,13 @@ class NPZFolderDataset(Dataset):
     def __getitem__(self, idx):
         img_path, mask_path, internal_idx = self.samples[idx]
 
-        # --- Immagine Source (Es. H&E o IHC isolata) ---
         data_src = np.load(img_path, mmap_mode="r", allow_pickle=True)
         arr_src = data_src[self.key]
         
         tile_img = self._tile_to_uint8_numpy(arr_src[internal_idx, 0])
-        # Lasciamo img in formato H,W,C in range [0, 255] uint8 per compatibilità col nuovo estensore Fast
         img = tile_img
         data_src.close()
 
-        # --- Immagine Target (Es. IHC) ---
         if mask_path is not None:
             data_tgt = np.load(mask_path, mmap_mode="r", allow_pickle=True)
             arr_tgt = data_tgt[self.key]
@@ -193,23 +158,17 @@ class NPZFolderDataset(Dataset):
         else:
             mask = img
 
-        # --- Densità Pre-computate (Se Esistono) ---
-        # Formattiamo il path: sostituiamo la folder source con la folder precomputed
-        # e cambiamo estensione da .npz a _densities.npy
         if self.precomputed_path is not None:
-            # Ricostruiamo il percorso
             rel_path = os.path.relpath(img_path, self.folder_path)
             density_file = rel_path.replace(".npz", "_densities.npy")
             density_full_path = os.path.join(self.precomputed_path, density_file)
 
             if os.path.exists(density_full_path):
-                # Carichiamo solo l'indice specifico senza portare tutto in RAM
                 try:
                     densities_array = np.load(density_full_path, mmap_mode="r")
                     density_map_8x8 = torch.from_numpy(np.array(densities_array[internal_idx]))
                     return img, mask, density_map_8x8
                 except Exception:
-                    pass # Se c'è un errore di IO, fallback al return a 2 elementi
+                    pass 
 
-        # Fallback standard
         return img, mask
